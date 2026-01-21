@@ -543,3 +543,42 @@ class Webhook(models.Model):
 
     def __str__(self):
         return f"Webhook to {self.callback_url}"
+
+
+class Allocation(models.Model):
+    """
+    Allocation model based on Asana's Allocation schema.
+    Represents how much of a resource is allocated to a work object
+    over a specific period with an effort value (percentage or hours).
+    """
+
+    EFFORT_UNIT_CHOICES = [
+        ('percentage', 'Percentage'),
+        ('hours', 'Hours'),
+    ]
+
+    gid = models.CharField(max_length=20, unique=True, primary_key=True)
+    resource_type = models.CharField(max_length=15, default='allocation')
+
+    # What is being allocated (e.g., person, team)
+    resource = models.JSONField()  # store compact resource ref {gid, resource_type, name}
+    # Work object receiving the allocation (e.g., project, portfolio)
+    work_object = models.JSONField()  # store compact object ref {gid, resource_type, name}
+
+    effort_value = models.DecimalField(max_digits=8, decimal_places=2)
+    effort_unit = models.CharField(max_length=20, choices=EFFORT_UNIT_CHOICES, default='percentage')
+
+    start_on = models.DateField()
+    end_on = models.DateField(blank=True, null=True)
+
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='allocations')
+
+    created_at = models.DateTimeField(default=timezone.now)
+    modified_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'allocations'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Allocation {self.gid}"

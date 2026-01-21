@@ -9,7 +9,8 @@ from django.utils import timezone
 from .models import (
     User, Workspace, Team, Project, Task, Section, Tag,
     ProjectMembership, WorkspaceMembership, TaskTag,
-    Story, Attachment, CustomField, ProjectStatus, Event, Webhook
+    Story, Attachment, CustomField, ProjectStatus, Event, Webhook,
+    Allocation
 )
 from .serializers import (
     UserSerializer, WorkspaceSerializer, TeamSerializer, ProjectSerializer,
@@ -17,10 +18,12 @@ from .serializers import (
     ProjectMembershipSerializer, WorkspaceMembershipSerializer,
     StorySerializer, AttachmentSerializer, CustomFieldSerializer,
     ProjectStatusSerializer, EventSerializer, WebhookSerializer,
+    AllocationSerializer,
     CreateUserSerializer, CreateWorkspaceSerializer, CreateTeamSerializer,
     CreateProjectSerializer, CreateTaskSerializer, CreateTagSerializer,
     CreateStorySerializer, CreateAttachmentSerializer, CreateCustomFieldSerializer,
     CreateProjectStatusSerializer, CreateWebhookSerializer,
+    CreateAllocationSerializer,
     AddProjectMembersSerializer, AddTaskFollowersSerializer
 )
 
@@ -486,6 +489,26 @@ class WebhookViewSet(AsanaModelViewSet):
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
         # In a real implementation, created_by would be the authenticated user
+        serializer.save(gid=gid, workspace=workspace)
+
+
+class AllocationViewSet(AsanaModelViewSet):
+    """ViewSet for Allocation operations"""
+    queryset = Allocation.objects.all()
+    serializer_class = AllocationSerializer
+    pagination_class = AsanaPagination
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CreateAllocationSerializer
+        return AllocationSerializer
+
+    def perform_create(self, serializer):
+        # Generate a unique GID and resolve workspace
+        import uuid
+        gid = str(uuid.uuid4().hex)[:16]
+        workspace_gid = serializer.validated_data.pop('workspace')
+        workspace = get_object_or_404(Workspace, gid=workspace_gid)
         serializer.save(gid=gid, workspace=workspace)
 
 

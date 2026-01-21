@@ -15,6 +15,7 @@ router.register(r'attachments', views.AttachmentViewSet)
 router.register(r'custom_fields', views.CustomFieldViewSet)
 router.register(r'project_statuses', views.ProjectStatusViewSet)
 router.register(r'webhooks', views.WebhookViewSet)
+router.register(r'allocations', views.AllocationViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

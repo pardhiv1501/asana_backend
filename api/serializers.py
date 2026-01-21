@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     User, Workspace, Team, Project, Task, Section, Tag,
     ProjectMembership, WorkspaceMembership, Story, Attachment,
-    CustomField, CustomFieldValue, ProjectStatus, Event, Webhook
+    CustomField, CustomFieldValue, ProjectStatus, Event, Webhook,
+    Allocation
 )
 
 
@@ -425,6 +426,20 @@ class WebhookSerializer(serializers.ModelSerializer):
         read_only_fields = ['gid', 'resource_type', 'created_at', 'modified_at']
 
 
+class AllocationSerializer(serializers.ModelSerializer):
+    """Allocation serializer"""
+    workspace = WorkspaceCompactSerializer(read_only=True)
+
+    class Meta:
+        model = Allocation
+        fields = [
+            'gid', 'resource_type', 'resource', 'work_object',
+            'effort_value', 'effort_unit', 'start_on', 'end_on',
+            'workspace', 'created_at', 'modified_at'
+        ]
+        read_only_fields = ['gid', 'resource_type', 'created_at', 'modified_at']
+
+
 # Create serializers for new models
 
 class CreateStorySerializer(serializers.ModelSerializer):
@@ -488,5 +503,25 @@ class CreateWebhookSerializer(serializers.ModelSerializer):
         fields = ['callback_url', 'filters', 'workspace']
         extra_kwargs = {
             'callback_url': {'required': True},
+            'workspace': {'required': True},
+        }
+
+
+class CreateAllocationSerializer(serializers.ModelSerializer):
+    """Serializer for creating allocations"""
+    workspace = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = Allocation
+        fields = [
+            'resource', 'work_object', 'effort_value', 'effort_unit',
+            'start_on', 'end_on', 'workspace'
+        ]
+        extra_kwargs = {
+            'resource': {'required': True},
+            'work_object': {'required': True},
+            'effort_value': {'required': True},
+            'effort_unit': {'required': True},
+            'start_on': {'required': True},
             'workspace': {'required': True},
         }
