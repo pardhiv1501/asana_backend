@@ -1,11 +1,10 @@
 from django.shortcuts import get_object_or_404
-from django.db import transaction
-from rest_framework import viewsets, status
-from rest_framework.decorators import action, api_view, permission_classes
+from django.utils import timezone
+from rest_framework import status, generics
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework.pagination import PageNumberPagination
-from django.utils import timezone
 from .models import (
     User, Workspace, Team, Project, Task, Section, Tag,
     ProjectMembership, WorkspaceMembership, TaskTag,
@@ -26,6 +25,7 @@ from .serializers import (
     CreateAllocationSerializer,
     AddProjectMembersSerializer, AddTaskFollowersSerializer
 )
+import uuid
 
 
 class AsanaPagination(PageNumberPagination):
@@ -43,527 +43,436 @@ class AsanaPagination(PageNumberPagination):
         })
 
 
-class AsanaModelViewSet(viewsets.ModelViewSet):
-    """Base ViewSet that returns Asana-compatible responses"""
+class AsanaListCreateAPIView(generics.ListCreateAPIView):
+    """Base List/Create API with Asana-style responses"""
     permission_classes = [AllowAny]
+    pagination_class = AsanaPagination
 
     def list(self, request, *args, **kwargs):
-        """Override list to return Asana-style response"""
         queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
-
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-
         serializer = self.get_serializer(queryset, many=True)
         return Response({'data': serializer.data})
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        instance = serializer.instance
+        read_serializer = self.get_serializer(instance)
+        headers = self.get_success_headers(read_serializer.data)
+        return Response({'data': read_serializer.data}, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class AsanaRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
+    """Base Retrieve/Update/Destroy API with Asana-style responses"""
+    permission_classes = [AllowAny]
+
     def retrieve(self, request, *args, **kwargs):
-        """Override retrieve to return Asana-style response"""
         instance = self.get_object()
         serializer = self.get_serializer(instance)
         return Response({'data': serializer.data})
 
-    def create(self, request, *args, **kwargs):
-        """Override create to return Asana-style response"""
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-
-        # Get the full serialized object using the read serializer
-        instance = serializer.instance
-        read_serializer = self.serializer_class(instance)
-        return Response({'data': read_serializer.data}, status=status.HTTP_201_CREATED, headers=headers)
-
     def update(self, request, *args, **kwargs):
-        """Override update to return Asana-style response"""
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-
-        if getattr(instance, '_prefetched_objects_cache', None):
-            # If 'prefetch_related' has been applied to a queryset, we need to
-            # forcibly invalidate the prefetch cache on the instance.
-            instance._prefetched_objects_cache = {}
-
         return Response({'data': serializer.data})
 
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-class UserViewSet(AsanaModelViewSet):
-    """ViewSet for User operations"""
+
+# User views
+class UserListCreateView(AsanaListCreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateUserSerializer
-        return UserSerializer
+        return CreateUserSerializer if self.request.method == 'POST' else UserSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID for the user
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         serializer.save(gid=gid)
 
 
-class WorkspaceViewSet(AsanaModelViewSet):
-    """ViewSet for Workspace operations"""
+class UserDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+
+
+class UserMeView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        user = User.objects.first()
+        if not user:
+            return Response({'errors': [{'message': 'No users found'}]}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'data': UserSerializer(user).data})
+
+
+# Workspace views
+class WorkspaceListCreateView(AsanaListCreateAPIView):
     queryset = Workspace.objects.all()
     serializer_class = WorkspaceSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateWorkspaceSerializer
-        return WorkspaceSerializer
+        return CreateWorkspaceSerializer if self.request.method == 'POST' else WorkspaceSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID for the workspace
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         serializer.save(gid=gid)
 
-    @action(detail=True, methods=['get'])
-    def teams(self, request, pk=None):
-        """Get teams in this workspace"""
-        workspace = self.get_object()
+
+class WorkspaceDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Workspace.objects.all()
+    serializer_class = WorkspaceSerializer
+
+
+class WorkspaceTeamsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, workspace_gid):
+        workspace = get_object_or_404(Workspace, gid=workspace_gid)
         teams = Team.objects.filter(organization=workspace)
-        serializer = TeamSerializer(teams, many=True)
-        return Response({'data': serializer.data})
+        return Response({'data': TeamSerializer(teams, many=True).data})
 
-    @action(detail=True, methods=['get'])
-    def projects(self, request, pk=None):
-        """Get projects in this workspace"""
-        workspace = self.get_object()
+
+class WorkspaceProjectsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, workspace_gid):
+        workspace = get_object_or_404(Workspace, gid=workspace_gid)
         projects = Project.objects.filter(workspace=workspace)
-        serializer = ProjectSerializer(projects, many=True)
-        return Response({'data': serializer.data})
+        return Response({'data': ProjectSerializer(projects, many=True).data})
 
-    @action(detail=True, methods=['get'])
-    def tasks(self, request, pk=None):
-        """Get tasks in this workspace"""
-        workspace = self.get_object()
+
+class WorkspaceTasksView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, workspace_gid):
+        workspace = get_object_or_404(Workspace, gid=workspace_gid)
         tasks = Task.objects.filter(workspace=workspace)
-        serializer = TaskSerializer(tasks, many=True)
-        return Response({'data': serializer.data})
+        return Response({'data': TaskSerializer(tasks, many=True).data})
 
-    @action(detail=True, methods=['get'])
-    def tags(self, request, pk=None):
-        """Get tags in this workspace"""
-        workspace = self.get_object()
+
+class WorkspaceTagsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, workspace_gid):
+        workspace = get_object_or_404(Workspace, gid=workspace_gid)
         tags = Tag.objects.filter(workspace=workspace)
-        serializer = TagSerializer(tags, many=True)
-        return Response({'data': serializer.data})
+        return Response({'data': TagSerializer(tags, many=True).data})
 
 
-class TeamViewSet(AsanaModelViewSet):
-    """ViewSet for Team operations"""
+# Team views
+class TeamListCreateView(AsanaListCreateAPIView):
     queryset = Team.objects.all()
     serializer_class = TeamSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateTeamSerializer
-        return TeamSerializer
+        return CreateTeamSerializer if self.request.method == 'POST' else TeamSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve organization
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         organization_gid = serializer.validated_data.pop('organization')
         organization = get_object_or_404(Workspace, gid=organization_gid)
         serializer.save(gid=gid, organization=organization)
 
-    @action(detail=True, methods=['get'])
-    def projects(self, request, pk=None):
-        """Get projects in this team"""
-        team = self.get_object()
+
+class TeamDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Team.objects.all()
+    serializer_class = TeamSerializer
+
+
+class TeamProjectsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, team_gid):
+        team = get_object_or_404(Team, gid=team_gid)
         projects = Project.objects.filter(team=team)
-        serializer = ProjectSerializer(projects, many=True)
-        return Response({'data': serializer.data})
+        return Response({'data': ProjectSerializer(projects, many=True).data})
 
 
-class ProjectViewSet(AsanaModelViewSet):
-    """ViewSet for Project operations"""
+# Project views
+class ProjectListCreateView(AsanaListCreateAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateProjectSerializer
-        return ProjectSerializer
+        return CreateProjectSerializer if self.request.method == 'POST' else ProjectSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve relationships
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
-
         team_gid = serializer.validated_data.get('team')
         if team_gid:
-            team = get_object_or_404(Team, gid=team_gid)
-            serializer.validated_data['team'] = team
-
+            serializer.validated_data['team'] = get_object_or_404(Team, gid=team_gid)
         owner_gid = serializer.validated_data.get('owner')
         if owner_gid:
-            owner = get_object_or_404(User, gid=owner_gid)
-            serializer.validated_data['owner'] = owner
-
+            serializer.validated_data['owner'] = get_object_or_404(User, gid=owner_gid)
         serializer.save(gid=gid, workspace=workspace)
 
-    @action(detail=True, methods=['get'])
-    def tasks(self, request, pk=None):
-        """Get tasks in this project"""
-        project = self.get_object()
+
+class ProjectDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Project.objects.all()
+    serializer_class = ProjectSerializer
+
+
+class ProjectTasksView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, project_gid):
+        project = get_object_or_404(Project, gid=project_gid)
         tasks = Task.objects.filter(projects=project)
-        serializer = TaskSerializer(tasks, many=True)
-        return Response({'data': serializer.data})
+        return Response({'data': TaskSerializer(tasks, many=True).data})
 
-    @action(detail=True, methods=['post'])
-    def add_members(self, request, pk=None):
-        """Add members to project"""
-        project = self.get_object()
+
+class ProjectAddMembersView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, project_gid):
+        project = get_object_or_404(Project, gid=project_gid)
         serializer = AddProjectMembersSerializer(data=request.data)
-
-        if serializer.is_valid():
-            members_gids = serializer.validated_data['members']
-            created_memberships = []
-
-            for member_gid in members_gids:
-                if member_gid == 'me':
-                    # In a real implementation, this would use the authenticated user
-                    continue
-
-                user = get_object_or_404(User, gid=member_gid)
-
-                # Create membership if it doesn't exist
-                membership, created = ProjectMembership.objects.get_or_create(
-                    user=user,
-                    project=project,
-                    defaults={'gid': str(uuid.uuid4().hex)[:16]}
-                )
-
-                if created:
-                    membership_serializer = ProjectMembershipSerializer(membership)
-                    created_memberships.append(membership_serializer.data)
-
-            return Response({'data': created_memberships})
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        members_gids = serializer.validated_data['members']
+        created_memberships = []
+        for member_gid in members_gids:
+            if member_gid == 'me':
+                continue
+            user = get_object_or_404(User, gid=member_gid)
+            membership, created = ProjectMembership.objects.get_or_create(
+                user=user,
+                project=project,
+                defaults={'gid': str(uuid.uuid4().hex)[:16]}
+            )
+            if created:
+                created_memberships.append(ProjectMembershipSerializer(membership).data)
+        return Response({'data': created_memberships})
 
 
-class TaskViewSet(AsanaModelViewSet):
-    """ViewSet for Task operations"""
+# Task views
+class TaskListCreateView(AsanaListCreateAPIView):
     queryset = Task.objects.all()
     serializer_class = TaskSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateTaskSerializer
-        return TaskSerializer
+        return CreateTaskSerializer if self.request.method == 'POST' else TaskSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve relationships
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
-
         assignee_gid = serializer.validated_data.get('assignee')
         if assignee_gid:
-            assignee = get_object_or_404(User, gid=assignee_gid)
-            serializer.validated_data['assignee'] = assignee
-
+            serializer.validated_data['assignee'] = get_object_or_404(User, gid=assignee_gid)
         projects_gids = serializer.validated_data.pop('projects', [])
-        projects = []
-        for project_gid in projects_gids:
-            project = get_object_or_404(Project, gid=project_gid)
-            projects.append(project)
-
-        # In a real implementation, created_by would be the authenticated user
-        # For now, we'll set it to None or a default user
+        projects = [get_object_or_404(Project, gid=pid) for pid in projects_gids]
         task = serializer.save(gid=gid, workspace=workspace)
         task.projects.set(projects)
         return task
 
+
+class TaskDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Task.objects.all()
+    serializer_class = TaskSerializer
+
     def perform_update(self, serializer):
-        """Handle task updates, especially completion"""
         task = self.get_object()
         old_completed = task.completed
-
-        # Update assignee if provided
         assignee_gid = serializer.validated_data.get('assignee')
         if assignee_gid:
-            assignee = get_object_or_404(User, gid=assignee_gid)
-            serializer.validated_data['assignee'] = assignee
-
+            serializer.validated_data['assignee'] = get_object_or_404(User, gid=assignee_gid)
         task = serializer.save()
-
-        # Handle completion tracking
         if task.completed and not old_completed:
             task.completed_at = timezone.now()
-            # In a real implementation, completed_by would be the authenticated user
             task.save()
-
         return task
 
-    @action(detail=True, methods=['post'])
-    def add_followers(self, request, pk=None):
-        """Add followers to task"""
-        task = self.get_object()
+
+class TaskAddFollowersView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, task_gid):
+        task = get_object_or_404(Task, gid=task_gid)
         serializer = AddTaskFollowersSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        # Placeholder: would create follower relationships
+        return Response({'data': []})
 
-        if serializer.is_valid():
-            followers_gids = serializer.validated_data['followers']
-            # In a real implementation, this would create follower relationships
-            # For now, we'll just return success
-            return Response({'data': []})
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=True, methods=['post'])
-    def add_tag(self, request, pk=None):
-        """Add a tag to the task"""
-        task = self.get_object()
+class TaskAddTagView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, task_gid):
+        task = get_object_or_404(Task, gid=task_gid)
         tag_gid = request.data.get('tag')
-
         if not tag_gid:
             return Response({'errors': [{'message': 'tag field is required'}]}, status=status.HTTP_400_BAD_REQUEST)
-
         tag = get_object_or_404(Tag, gid=tag_gid)
-
-        # Create relationship if it doesn't exist
         task_tag, created = TaskTag.objects.get_or_create(task=task, tag=tag)
-
         if created:
             return Response({'data': {'task': TaskSerializer(task).data}})
-        else:
-            return Response({'errors': [{'message': 'Tag already added to task'}]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'errors': [{'message': 'Tag already added to task'}]}, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=True, methods=['post'])
-    def remove_tag(self, request, pk=None):
-        """Remove a tag from the task"""
-        task = self.get_object()
+
+class TaskRemoveTagView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, task_gid):
+        task = get_object_or_404(Task, gid=task_gid)
         tag_gid = request.data.get('tag')
-
         if not tag_gid:
             return Response({'errors': [{'message': 'tag field is required'}]}, status=status.HTTP_400_BAD_REQUEST)
-
         tag = get_object_or_404(Tag, gid=tag_gid)
-
-        # Remove relationship
         deleted_count, _ = TaskTag.objects.filter(task=task, tag=tag).delete()
-
         if deleted_count > 0:
             return Response({'data': {'task': TaskSerializer(task).data}})
-        else:
-            return Response({'errors': [{'message': 'Tag not found on task'}]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'errors': [{'message': 'Tag not found on task'}]}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class TagViewSet(AsanaModelViewSet):
-    """ViewSet for Tag operations"""
+# Tag views
+class TagListCreateView(AsanaListCreateAPIView):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateTagSerializer
-        return TagSerializer
+        return CreateTagSerializer if self.request.method == 'POST' else TagSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve workspace
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
         serializer.save(gid=gid, workspace=workspace)
 
 
-class StoryViewSet(AsanaModelViewSet):
-    """ViewSet for Story operations"""
+class TagDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Tag.objects.all()
+    serializer_class = TagSerializer
+
+
+# Story views
+class StoryListCreateView(AsanaListCreateAPIView):
     queryset = Story.objects.all()
     serializer_class = StorySerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateStorySerializer
-        return StorySerializer
+        return CreateStorySerializer if self.request.method == 'POST' else StorySerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve task
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         task_gid = serializer.validated_data.pop('task')
         task = get_object_or_404(Task, gid=task_gid)
-        # In a real implementation, created_by would be the authenticated user
         serializer.save(gid=gid, task=task)
 
 
-class AttachmentViewSet(AsanaModelViewSet):
-    """ViewSet for Attachment operations"""
+class StoryDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Story.objects.all()
+    serializer_class = StorySerializer
+
+
+# Attachment views
+class AttachmentListCreateView(AsanaListCreateAPIView):
     queryset = Attachment.objects.all()
     serializer_class = AttachmentSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateAttachmentSerializer
-        return AttachmentSerializer
+        return CreateAttachmentSerializer if self.request.method == 'POST' else AttachmentSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve task
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         task_gid = serializer.validated_data.pop('task')
         task = get_object_or_404(Task, gid=task_gid)
-        # In a real implementation, created_by would be the authenticated user
         serializer.save(gid=gid, task=task)
 
 
-class CustomFieldViewSet(AsanaModelViewSet):
-    """ViewSet for Custom Field operations"""
+class AttachmentDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Attachment.objects.all()
+    serializer_class = AttachmentSerializer
+
+
+# Custom field views
+class CustomFieldListCreateView(AsanaListCreateAPIView):
     queryset = CustomField.objects.all()
     serializer_class = CustomFieldSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateCustomFieldSerializer
-        return CustomFieldSerializer
+        return CreateCustomFieldSerializer if self.request.method == 'POST' else CustomFieldSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve workspace
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
-        # In a real implementation, created_by would be the authenticated user
         serializer.save(gid=gid, workspace=workspace)
 
 
-class ProjectStatusViewSet(AsanaModelViewSet):
-    """ViewSet for Project Status operations"""
+class CustomFieldDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = CustomField.objects.all()
+    serializer_class = CustomFieldSerializer
+
+
+# Project status views
+class ProjectStatusListCreateView(AsanaListCreateAPIView):
     queryset = ProjectStatus.objects.all()
     serializer_class = ProjectStatusSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateProjectStatusSerializer
-        return ProjectStatusSerializer
+        return CreateProjectStatusSerializer if self.request.method == 'POST' else ProjectStatusSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve project
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         project_gid = serializer.validated_data.pop('project')
         project = get_object_or_404(Project, gid=project_gid)
-        # In a real implementation, created_by would be the authenticated user
         serializer.save(gid=gid, project=project)
 
 
-class WebhookViewSet(AsanaModelViewSet):
-    """ViewSet for Webhook operations"""
+class ProjectStatusDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = ProjectStatus.objects.all()
+    serializer_class = ProjectStatusSerializer
+
+
+# Webhook views
+class WebhookListCreateView(AsanaListCreateAPIView):
     queryset = Webhook.objects.all()
     serializer_class = WebhookSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateWebhookSerializer
-        return WebhookSerializer
+        return CreateWebhookSerializer if self.request.method == 'POST' else WebhookSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve workspace
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
-        # In a real implementation, created_by would be the authenticated user
         serializer.save(gid=gid, workspace=workspace)
 
 
-class AllocationViewSet(AsanaModelViewSet):
-    """ViewSet for Allocation operations"""
+class WebhookDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Webhook.objects.all()
+    serializer_class = WebhookSerializer
+
+
+# Allocation views
+class AllocationListCreateView(AsanaListCreateAPIView):
     queryset = Allocation.objects.all()
     serializer_class = AllocationSerializer
-    pagination_class = AsanaPagination
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CreateAllocationSerializer
-        return AllocationSerializer
+        return CreateAllocationSerializer if self.request.method == 'POST' else AllocationSerializer
 
     def perform_create(self, serializer):
-        # Generate a unique GID and resolve workspace
-        import uuid
         gid = str(uuid.uuid4().hex)[:16]
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
         serializer.save(gid=gid, workspace=workspace)
 
 
-# Additional API views for specific endpoints
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def user_me(request):
-    """Get current user (me endpoint)"""
-    # In a real implementation, this would return the authenticated user
-    # For now, return a sample user or handle appropriately
-    try:
-        user = User.objects.first()
-        if user:
-            serializer = UserSerializer(user)
-            return Response({'data': serializer.data})
-        else:
-            return Response({'errors': [{'message': 'No users found'}]}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'errors': [{'message': str(e)}]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def workspace_projects(request, workspace_gid):
-    """Get projects in a workspace (alternative endpoint)"""
-    try:
-        workspace = get_object_or_404(Workspace, gid=workspace_gid)
-        projects = Project.objects.filter(workspace=workspace)
-        serializer = ProjectSerializer(projects, many=True)
-        return Response({'data': serializer.data})
-    except Exception as e:
-        return Response({'errors': [{'message': str(e)}]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def workspace_tasks(request, workspace_gid):
-    """Get tasks in a workspace (alternative endpoint)"""
-    try:
-        workspace = get_object_or_404(Workspace, gid=workspace_gid)
-        tasks = Task.objects.filter(workspace=workspace)
-        serializer = TaskSerializer(tasks, many=True)
-        return Response({'data': serializer.data})
-    except Exception as e:
-        return Response({'errors': [{'message': str(e)}]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def project_tasks(request, project_gid):
-    """Get tasks in a project (alternative endpoint)"""
-    try:
-        project = get_object_or_404(Project, gid=project_gid)
-        tasks = Task.objects.filter(projects=project)
-        serializer = TaskSerializer(tasks, many=True)
-        return Response({'data': serializer.data})
-    except Exception as e:
-        return Response({'errors': [{'message': str(e)}]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+class AllocationDetailView(AsanaRetrieveUpdateDestroyAPIView):
+    queryset = Allocation.objects.all()
+    serializer_class = AllocationSerializer
