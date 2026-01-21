@@ -1,5 +1,9 @@
 from rest_framework import serializers
-from .models import User, Workspace, Team, Project, Task, Section, Tag, ProjectMembership, WorkspaceMembership
+from .models import (
+    User, Workspace, Team, Project, Task, Section, Tag,
+    ProjectMembership, WorkspaceMembership, Story, Attachment,
+    CustomField, CustomFieldValue, ProjectStatus, Event, Webhook
+)
 
 
 class UserCompactSerializer(serializers.ModelSerializer):
@@ -23,20 +27,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_photo(self, obj):
         """Return photo URLs in the format expected by Asana API"""
-        photo_data = {}
-        if obj.photo_21x21:
-            photo_data['image_21x21'] = obj.photo_21x21
-        if obj.photo_27x27:
-            photo_data['image_27x27'] = obj.photo_27x27
-        if obj.photo_36x36:
-            photo_data['image_36x36'] = obj.photo_36x36
-        if obj.photo_60x60:
-            photo_data['image_60x60'] = obj.photo_60x60
-        if obj.photo_128x128:
-            photo_data['image_128x128'] = obj.photo_128x128
-        if obj.photo_1024x1024:
-            photo_data['image_1024x1024'] = obj.photo_1024x1024
-        return photo_data if photo_data else None
+        return obj.photo if obj.photo else None
 
 
 class WorkspaceCompactSerializer(serializers.ModelSerializer):
@@ -335,3 +326,167 @@ class AddTaskFollowersSerializer(serializers.Serializer):
                 except User.DoesNotExist:
                     raise serializers.ValidationError(f"User with gid {follower_gid} does not exist")
         return value
+
+
+# New serializers for additional Asana API entities
+
+class StorySerializer(serializers.ModelSerializer):
+    """Story serializer"""
+    created_by = UserCompactSerializer(read_only=True)
+
+    class Meta:
+        model = Story
+        fields = [
+            'gid', 'resource_type', 'resource_subtype', 'text', 'html_text',
+            'created_by', 'created_at', 'modified_at'
+        ]
+        read_only_fields = ['gid', 'resource_type', 'created_at', 'modified_at']
+
+
+class AttachmentSerializer(serializers.ModelSerializer):
+    """Attachment serializer"""
+    created_by = UserCompactSerializer(read_only=True)
+
+    class Meta:
+        model = Attachment
+        fields = [
+            'gid', 'resource_type', 'name', 'resource_subtype', 'size',
+            'download_url', 'view_url', 'permanent_url', 'created_by',
+            'created_at', 'modified_at'
+        ]
+        read_only_fields = ['gid', 'resource_type', 'created_at', 'modified_at']
+
+
+class CustomFieldSerializer(serializers.ModelSerializer):
+    """Custom field serializer"""
+    created_by = UserCompactSerializer(read_only=True)
+    enum_options = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomField
+        fields = [
+            'gid', 'resource_type', 'name', 'resource_subtype', 'type',
+            'description', 'enum_options', 'created_by', 'created_at', 'modified_at'
+        ]
+        read_only_fields = ['gid', 'resource_type', 'created_at', 'modified_at']
+
+    def get_enum_options(self, obj):
+        """Return enum options in Asana format"""
+        if obj.enum_options:
+            return obj.enum_options
+        return []
+
+
+class CustomFieldValueSerializer(serializers.ModelSerializer):
+    """Custom field value serializer"""
+    custom_field = CustomFieldSerializer(read_only=True)
+
+    class Meta:
+        model = CustomFieldValue
+        fields = ['custom_field', 'text_value', 'number_value', 'date_value', 'enum_value']
+
+
+class ProjectStatusSerializer(serializers.ModelSerializer):
+    """Project status serializer"""
+    created_by = UserCompactSerializer(read_only=True)
+
+    class Meta:
+        model = ProjectStatus
+        fields = [
+            'gid', 'resource_type', 'title', 'text', 'html_text', 'color',
+            'created_by', 'created_at', 'modified_at'
+        ]
+        read_only_fields = ['gid', 'resource_type', 'created_at', 'modified_at']
+
+
+class EventSerializer(serializers.ModelSerializer):
+    """Event serializer"""
+    user = UserCompactSerializer(read_only=True)
+
+    class Meta:
+        model = Event
+        fields = [
+            'gid', 'resource_type', 'action', 'resource', 'change', 'parent',
+            'user', 'created_at'
+        ]
+        read_only_fields = ['gid', 'resource_type', 'created_at']
+
+
+class WebhookSerializer(serializers.ModelSerializer):
+    """Webhook serializer"""
+    created_by = UserCompactSerializer(read_only=True)
+
+    class Meta:
+        model = Webhook
+        fields = [
+            'gid', 'resource_type', 'callback_url', 'method', 'filters',
+            'active', 'created_by', 'created_at', 'modified_at'
+        ]
+        read_only_fields = ['gid', 'resource_type', 'created_at', 'modified_at']
+
+
+# Create serializers for new models
+
+class CreateStorySerializer(serializers.ModelSerializer):
+    """Serializer for creating stories"""
+    task = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = Story
+        fields = ['text', 'resource_subtype', 'task']
+        extra_kwargs = {
+            'text': {'required': True},
+            'task': {'required': True},
+        }
+
+
+class CreateAttachmentSerializer(serializers.ModelSerializer):
+    """Serializer for creating attachments"""
+    task = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = Attachment
+        fields = ['name', 'resource_subtype', 'download_url', 'task']
+        extra_kwargs = {
+            'name': {'required': True},
+            'task': {'required': True},
+        }
+
+
+class CreateCustomFieldSerializer(serializers.ModelSerializer):
+    """Serializer for creating custom fields"""
+    workspace = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = CustomField
+        fields = ['name', 'resource_subtype', 'description', 'workspace', 'enum_options']
+        extra_kwargs = {
+            'name': {'required': True},
+            'workspace': {'required': True},
+        }
+
+
+class CreateProjectStatusSerializer(serializers.ModelSerializer):
+    """Serializer for creating project statuses"""
+    project = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = ProjectStatus
+        fields = ['title', 'text', 'color', 'project']
+        extra_kwargs = {
+            'title': {'required': True},
+            'project': {'required': True},
+        }
+
+
+class CreateWebhookSerializer(serializers.ModelSerializer):
+    """Serializer for creating webhooks"""
+    workspace = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = Webhook
+        fields = ['callback_url', 'filters', 'workspace']
+        extra_kwargs = {
+            'callback_url': {'required': True},
+            'workspace': {'required': True},
+        }

@@ -10,6 +10,11 @@ router.register(r'teams', views.TeamViewSet)
 router.register(r'projects', views.ProjectViewSet)
 router.register(r'tasks', views.TaskViewSet)
 router.register(r'tags', views.TagViewSet)
+router.register(r'stories', views.StoryViewSet)
+router.register(r'attachments', views.AttachmentViewSet)
+router.register(r'custom_fields', views.CustomFieldViewSet)
+router.register(r'project_statuses', views.ProjectStatusViewSet)
+router.register(r'webhooks', views.WebhookViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

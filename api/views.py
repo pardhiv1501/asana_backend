@@ -8,14 +8,19 @@ from rest_framework.pagination import PageNumberPagination
 from django.utils import timezone
 from .models import (
     User, Workspace, Team, Project, Task, Section, Tag,
-    ProjectMembership, WorkspaceMembership, TaskTag
+    ProjectMembership, WorkspaceMembership, TaskTag,
+    Story, Attachment, CustomField, ProjectStatus, Event, Webhook
 )
 from .serializers import (
     UserSerializer, WorkspaceSerializer, TeamSerializer, ProjectSerializer,
     TaskSerializer, SectionSerializer, TagSerializer,
     ProjectMembershipSerializer, WorkspaceMembershipSerializer,
+    StorySerializer, AttachmentSerializer, CustomFieldSerializer,
+    ProjectStatusSerializer, EventSerializer, WebhookSerializer,
     CreateUserSerializer, CreateWorkspaceSerializer, CreateTeamSerializer,
     CreateProjectSerializer, CreateTaskSerializer, CreateTagSerializer,
+    CreateStorySerializer, CreateAttachmentSerializer, CreateCustomFieldSerializer,
+    CreateProjectStatusSerializer, CreateWebhookSerializer,
     AddProjectMembersSerializer, AddTaskFollowersSerializer
 )
 
@@ -376,6 +381,111 @@ class TagViewSet(AsanaModelViewSet):
         gid = str(uuid.uuid4().hex)[:16]
         workspace_gid = serializer.validated_data.pop('workspace')
         workspace = get_object_or_404(Workspace, gid=workspace_gid)
+        serializer.save(gid=gid, workspace=workspace)
+
+
+class StoryViewSet(AsanaModelViewSet):
+    """ViewSet for Story operations"""
+    queryset = Story.objects.all()
+    serializer_class = StorySerializer
+    pagination_class = AsanaPagination
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CreateStorySerializer
+        return StorySerializer
+
+    def perform_create(self, serializer):
+        # Generate a unique GID and resolve task
+        import uuid
+        gid = str(uuid.uuid4().hex)[:16]
+        task_gid = serializer.validated_data.pop('task')
+        task = get_object_or_404(Task, gid=task_gid)
+        # In a real implementation, created_by would be the authenticated user
+        serializer.save(gid=gid, task=task)
+
+
+class AttachmentViewSet(AsanaModelViewSet):
+    """ViewSet for Attachment operations"""
+    queryset = Attachment.objects.all()
+    serializer_class = AttachmentSerializer
+    pagination_class = AsanaPagination
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CreateAttachmentSerializer
+        return AttachmentSerializer
+
+    def perform_create(self, serializer):
+        # Generate a unique GID and resolve task
+        import uuid
+        gid = str(uuid.uuid4().hex)[:16]
+        task_gid = serializer.validated_data.pop('task')
+        task = get_object_or_404(Task, gid=task_gid)
+        # In a real implementation, created_by would be the authenticated user
+        serializer.save(gid=gid, task=task)
+
+
+class CustomFieldViewSet(AsanaModelViewSet):
+    """ViewSet for Custom Field operations"""
+    queryset = CustomField.objects.all()
+    serializer_class = CustomFieldSerializer
+    pagination_class = AsanaPagination
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CreateCustomFieldSerializer
+        return CustomFieldSerializer
+
+    def perform_create(self, serializer):
+        # Generate a unique GID and resolve workspace
+        import uuid
+        gid = str(uuid.uuid4().hex)[:16]
+        workspace_gid = serializer.validated_data.pop('workspace')
+        workspace = get_object_or_404(Workspace, gid=workspace_gid)
+        # In a real implementation, created_by would be the authenticated user
+        serializer.save(gid=gid, workspace=workspace)
+
+
+class ProjectStatusViewSet(AsanaModelViewSet):
+    """ViewSet for Project Status operations"""
+    queryset = ProjectStatus.objects.all()
+    serializer_class = ProjectStatusSerializer
+    pagination_class = AsanaPagination
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CreateProjectStatusSerializer
+        return ProjectStatusSerializer
+
+    def perform_create(self, serializer):
+        # Generate a unique GID and resolve project
+        import uuid
+        gid = str(uuid.uuid4().hex)[:16]
+        project_gid = serializer.validated_data.pop('project')
+        project = get_object_or_404(Project, gid=project_gid)
+        # In a real implementation, created_by would be the authenticated user
+        serializer.save(gid=gid, project=project)
+
+
+class WebhookViewSet(AsanaModelViewSet):
+    """ViewSet for Webhook operations"""
+    queryset = Webhook.objects.all()
+    serializer_class = WebhookSerializer
+    pagination_class = AsanaPagination
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CreateWebhookSerializer
+        return WebhookSerializer
+
+    def perform_create(self, serializer):
+        # Generate a unique GID and resolve workspace
+        import uuid
+        gid = str(uuid.uuid4().hex)[:16]
+        workspace_gid = serializer.validated_data.pop('workspace')
+        workspace = get_object_or_404(Workspace, gid=workspace_gid)
+        # In a real implementation, created_by would be the authenticated user
         serializer.save(gid=gid, workspace=workspace)
 
 
